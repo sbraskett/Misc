@@ -160,9 +160,12 @@ def main():
                 valid_hosts.add(hostname)
 
     # --- Step 3: Compare results ---
+    matched_count = 0
     output_rows = []
     for id_val, hostname in extracted:
         status = "Matched" if hostname in valid_hosts else "Unmatched"
+        if status == "Matched":
+            matched_count += 1
         output_rows.append((id_val, hostname, status))
 
     # --- Step 4: Write details CSV ---
@@ -172,6 +175,7 @@ def main():
         writer.writerow(['ID', 'Hostname', 'Status'])
         writer.writerows(output_rows)
     print(f"✅ Detailed output saved to {detail_csv}")
+    print(f"🔍 Total matched hostnames: {matched_count}")
 
     # --- Step 5: Summary by ID ---
     summary = defaultdict(lambda: {'Total': 0, 'Matched': 0, 'Unmatched': 0})
