@@ -13,6 +13,7 @@ import requests
 import pickle
 from openpyxl import load_workbook
 from collections import defaultdict
+import sys
 
 # --- Cleaning Function ---
 def clean_string(s):
@@ -90,20 +91,37 @@ def main():
     parser.add_argument("--output-prefix", default="host_check", help="Prefix for output CSVs")
     parser.add_argument("--jira-url", help="Jira base URL")
     parser.add_argument("--jql", help="JQL query to pull Jira issues")
+    parser.add_argument("--jira-filter-id", help="Jira filter ID to use instead of JQL")
 
     args = parser.parse_args()
+
+    # --- Validate mutually exclusive JQL/filter usage ---
+    if args.jql and args.jira_filter_id:
+        print("❌ Error: Use either --jql or --jira-filter-id, not both.")
+        sys.exit(1)
 
     # --- Step 1: Get extracted hostnames (from Jira or Excel A) ---
     extracted = []
 
-    if args.jira_url and args.jql:
+    if args.jira_url and (args.jql or args.jira_filter_id):
         print("🔗 Using Jira as input source...")
         try:
             # Load token from cache
             with open("jira_token_cache.pkl", "rb") as f:
                 token = pickle.load(f)
+
+            jql = args.jql
+            if args.jira_filter_id:
+                # Fetch JQL from filter ID
+                filter_url = f"{args.jira_url}/rest/api/2/filter/{args.jira_filter_id}"
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                resp = requests.get(filter_url, headers=headers)
+                resp.raise_for_status()
+                jql = resp.json().get("jql")
+                print(f"📋 Retrieved JQL from filter {args.jira_filter_id}: {jql}")
+
             extracted = fetch_jira_hostnames(
-                args.jira_url, token, args.jql, args.trigger_pattern
+                args.jira_url, token, jql, args.trigger_pattern
             )
             print(f"✅ Retrieved {len(extracted)} hostnames from Jira issues.")
         except Exception as e:
