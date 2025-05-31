@@ -13,11 +13,27 @@ param (
 
 function Clean-String {
     param([string]$Text)
-    $Text = [regex]::Replace($Text, '[\u2013\u2014]', '-')
-    $Text = [regex]::Replace($Text, '[\u2018\u2019\u201A]', "'")
-    $Text = [regex]::Replace($Text, '[\u201C\u201D\u201E]', '"')
+
+    if (-not $Text) { return "" }
+
+    # Normalize quotes and dashes
+    $Text = $Text -replace '[\u2013\u2014]', '-'         # en/em dashes
+    $Text = $Text -replace '[\u2018\u2019\u201A]', "'"  # curly apostrophes
+    $Text = $Text -replace '[\u201C\u201D\u201E]', '"'  # curly quotes
+    $Text = $Text -replace '[\u00A0\u200B\uFEFF]', ' '  # non-breaking space, zero-width space, BOM
+
+    # Replace weird encodings
+    $Text = $Text -replace 'â€“', '-'
+    $Text = $Text -replace 'â€”', '-'
+    $Text = $Text -replace 'â€˜|â€™', "'"
+    $Text = $Text -replace 'â€œ|â€', '"'
+    $Text = $Text -replace 'â€¦', '...'
+    $Text = $Text -replace 'Â|â', ''
+
+    # Strip non-ASCII characters and normalize whitespace
     $Text = $Text -replace '[^\x00-\x7F]', ''
     $Text = $Text -replace '\s+', ' '
+
     return $Text.Trim().ToLower()
 }
 
