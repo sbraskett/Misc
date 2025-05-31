@@ -13,33 +13,20 @@ param (
 
 function Clean-String {
     param([string]$Text)
-
     if (-not $Text) { return "" }
 
-    # Normalize quotes and dashes
     $Text = $Text -replace '[\u2013\u2014]', '-'         # en/em dashes
     $Text = $Text -replace '[\u2018\u2019\u201A]', "'"  # curly apostrophes
     $Text = $Text -replace '[\u201C\u201D\u201E]', '"'  # curly quotes
-    $Text = $Text -replace '[\u00A0\u200B\uFEFF]', ' '  # non-breaking space, zero-width space, BOM
-
-    # Replace weird encodings
-    $Text = $Text -replace 'â€“', '-'
-    $Text = $Text -replace 'â€”', '-'
+    $Text = $Text -replace '[\u00A0\u200B\uFEFF]', ' '  # non-breaking/zero-width space/BOM
+    $Text = $Text -replace 'â€“|â€”', '-'
     $Text = $Text -replace 'â€˜|â€™', "'"
     $Text = $Text -replace 'â€œ|â€', '"'
     $Text = $Text -replace 'â€¦', '...'
     $Text = $Text -replace 'Â|â', ''
-
-    # Strip non-ASCII characters and normalize whitespace
     $Text = $Text -replace '[^\x00-\x7F]', ''
     $Text = $Text -replace '\s+', ' '
-
     return $Text.Trim().ToLower()
-}
-
-if ($Jql -and $JiraFilterId) {
-    Write-Error "❌ Use either --Jql or --JiraFilterId, not both."
-    exit 1
 }
 
 # Load valid hostnames from FileB
@@ -56,86 +43,41 @@ foreach ($sheet in $wbB.Workbook.Worksheets) {
 }
 Close-ExcelPackage $wbB
 
-# Load token
-$token = [System.IO.File]::ReadAllText("jira_token_cache.pkl")
-
-# Determine JQL
-if ($JiraUrl -and $JiraFilterId) {
-    $headers = @{ Authorization = "Bearer $token" }
-    $filterResp = Invoke-RestMethod "$JiraUrl/rest/api/2/filter/$JiraFilterId" -Headers $headers
-    $Jql = $filterResp.jql
-    Write-Host "📋 Using JQL from filter $JiraFilterId: $Jql"
-}
-
-# Extract hostnames from Jira or FileA
+# Load hostnames from FileA
 $results = @()
+$wbA = Open-ExcelPackage -Path $FileA
+foreach ($sheet in $wbA.Workbook.Worksheets) {
+    for ($r = 1; $r -le $sheet.Dimension.Rows; $r++) {
+        $rawText = [string]$sheet.Cells[$r, $ExtractColumn].Value
+        $id = Clean-String $sheet.Cells[$r, $IdColumn].Text
 
-if ($JiraUrl -and $Jql) {
-    Write-Host "🔗 Pulling issues from Jira..."
-    $startAt = 0
-    $total = $null
-    $headers = @{ Authorization = "Bearer $token"; Accept = "application/json" }
+        if (-not $rawText) { continue }
 
-    do {
-        $params = @{
-            jql = $Jql
-            fields = "key,description"
-            startAt = $startAt
-            maxResults = 100
-        }
-        $resp = Invoke-RestMethod -Uri "$JiraUrl/rest/api/2/search" -Headers $headers -Body $params -Method Get
-        $issues = $resp.issues
-        $total = $resp.total
-        Write-Host "🔄 Retrieved $($issues.Count) issues..."
+        $regex = New-Object System.Text.RegularExpressions.Regex(
+            $TriggerPattern,
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Singleline
+        )
+        $match = $regex.Match($rawText)
 
-        foreach ($issue in $issues) {
-            $id = $issue.key
-            $desc = $issue.fields.description
-            if (-not $desc) { continue }
+        if ($match.Success) {
+            $after = $rawText.Substring($match.Index + $match.Length)
+            $after = $after -replace "`r`n|`n|`r", "`n"
+            $firstLine = (($after -split "`n" | Where-Object { $_.Trim() -ne "" })[0]).Trim()
 
-            $match = [regex]::Match($desc, $TriggerPattern, 'IgnoreCase')
-            if ($match.Success) {
-                $after = $desc.Substring($match.Index + $match.Length)
-                $line = ($after -split "`n" | Where-Object { $_.Trim() })[0]
-                foreach ($server in ($line -split ',')) {
-                    $hn = (Clean-String $server).Split('.')[0]
-                    if ($hn) { $results += [PSCustomObject]@{ ID = $id; Hostname = $hn } }
-                }
-            }
-        }
-
-        $startAt += 100
-    } while ($startAt -lt $total)
-}
-elseif ($FileA) {
-    Write-Host "📂 Reading Excel file A..."
-    $wbA = Open-ExcelPackage -Path $FileA
-    foreach ($sheet in $wbA.Workbook.Worksheets) {
-        for ($r = 1; $r -le $sheet.Dimension.Rows; $r++) {
-            $text = $sheet.Cells[$r, $ExtractColumn].Text
-            $id = Clean-String $sheet.Cells[$r, $IdColumn].Text
-            $match = [regex]::Match($text, $TriggerPattern, 'IgnoreCase')
-            if ($match.Success) {
-                $after = $text.Substring($match.Index + $match.Length)
-                $line = ($after -split "`n" | Where-Object { $_.Trim() })[0]
-                foreach ($server in ($line -split ',')) {
-                    $hn = (Clean-String $server).Split('.')[0]
-                    if ($hn) { $results += [PSCustomObject]@{ ID = $id; Hostname = $hn } }
+            foreach ($server in ($firstLine -split ',')) {
+                $hn = (Clean-String ($server.Trim())).Split('.')[0]
+                if ($hn) {
+                    $results += [PSCustomObject]@{ ID = $id; Hostname = $hn }
                 }
             }
         }
     }
-    Close-ExcelPackage $wbA
 }
-else {
-    Write-Error "❌ Provide either --FileA or Jira parameters."
-    exit 1
-}
+Close-ExcelPackage $wbA
 
 # Compare to valid hosts
 $details = @()
 $summary = @{}
-
 $matchedCount = 0
 foreach ($rec in $results) {
     $status = if ($validHosts.ContainsKey($rec.Hostname)) { $matchedCount++; 'Matched' } else { 'Unmatched' }
@@ -148,8 +90,8 @@ foreach ($rec in $results) {
     $summary[$rec.ID][$status]++
 }
 
-# Write CSVs
-$details | Export-Csv -Path \"$OutputPrefix`_details.csv\" -NoTypeInformation
+# Export CSVs
+$details | Export-Csv -Path "$OutputPrefix`_details.csv" -NoTypeInformation
 Write-Host "✅ Saved: $OutputPrefix`_details.csv"
 Write-Host "🔍 Total matched hostnames: $matchedCount"
 
@@ -160,5 +102,6 @@ $summary.GetEnumerator() | ForEach-Object {
         Matched = $_.Value.Matched
         Unmatched = $_.Value.Unmatched
     }
-} | Export-Csv -Path \"$OutputPrefix`_summary.csv\" -NoTypeInformation
+} | Export-Csv -Path "$OutputPrefix`_summary.csv" -NoTypeInformation
 Write-Host "📊 Saved: $OutputPrefix`_summary.csv"
+Write-Host "🔍 $matchedCount hosts matched in $($summary.Keys.Count) unique request IDs"
