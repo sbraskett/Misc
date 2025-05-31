@@ -1,0 +1,106 @@
+# compare text from one column of a spreadsheet to one column of another speadsheet
+# print output to csv and summarize data
+
+# Paths
+$fileA = "C:\Path\To\spreadsheet_a.xlsx"
+$fileB = "C:\Path\To\spreadsheet_b.xlsx"
+$outputCsv = "C:\Path\To\matched_hostnames.csv"
+
+# Trigger phrase
+$trigger = "Server names that the file or folder that needs encrypting is hosted on:"
+
+# Clean-String function to handle Jira/encoding junk
+function Clean-String {
+    param ([string]$s)
+    if (-not $s) { return "" }
+
+    $s = $s -replace 'â€“', '-'
+    $s = $s -replace 'â€”', '-'
+    $s = $s -replace 'â€˜', "'"
+    $s = $s -replace 'â€™', "'"
+    $s = $s -replace 'â€œ', '"'
+    $s = $s -replace 'â€', '"'
+    $s = $s -replace 'â€¦', '...'
+    $s = $s -replace 'Â', ''
+    $s = $s -replace 'â', ''
+    $s = -join ($s.ToCharArray() | Where-Object { [int]$_ -le 127 })  # strip non-ASCII
+    $s = $s -replace '\s+', ' '  # normalize whitespace
+    return $s.Trim().ToLower()
+}
+
+# Start Excel COM
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+
+# Open File B and build set of valid hostnames from Column Y (25)
+$wbB = $excel.Workbooks.Open($fileB)
+$validHosts = @{}
+foreach ($sheet in $wbB.Sheets) {
+    $lastRow = $sheet.UsedRange.Rows.Count
+    for ($r = 1; $r -le $lastRow; $r++) {
+        $val = $sheet.Cells.Item($r, 25).Text
+        $host = (Clean-String $val).Split('.')[0]
+        if ($host) { $validHosts[$host] = $true }
+    }
+}
+$wbB.Close($false)
+
+# Open File A and parse matches
+$wbA = $excel.Workbooks.Open($fileA)
+$results = @()
+
+foreach ($sheet in $wbA.Sheets) {
+    $lastRow = $sheet.UsedRange.Rows.Count
+    for ($r = 1; $r -le $lastRow; $r++) {
+        $colB = Clean-String $sheet.Cells.Item($r, 2).Text
+        $colG = Clean-String $sheet.Cells.Item($r, 7).Text
+
+        if ($colG -like "*$trigger*") {
+            $after = $colG -replace ".*$trigger", ""
+            $firstLine = $after -split "`r?`n" | Select-Object -First 1
+            $servers = $firstLine -split ','
+
+            foreach ($server in $servers) {
+                $hostname = (Clean-String $server).Split('.')[0]
+                if ($hostname) {
+                    $status = if ($validHosts.ContainsKey($hostname)) { "Matched" } else { "Unmatched" }
+                    $results += [PSCustomObject]@{
+                        ColumnB  = $colB
+                        Hostname = $hostname
+                        Status   = $status
+                    }
+                }
+            }
+        }
+    }
+}
+$wbA.Close($false)
+$excel.Quit()
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+
+# Export to CSV
+$results | Export-Csv -Path $outputCsv -NoTypeInformation -Encoding UTF8
+Write-Output "✅ Output saved to $outputCsv"
+
+# --- Build summary per ColumnB ---
+$summary = $results |
+    Group-Object -Property ColumnB |
+    ForEach-Object {
+        $group = $_.Group
+        $total = $group.Count
+        $matched = ($group | Where-Object { $_.Status -eq "Matched" }).Count
+        $unmatched = $total - $matched
+
+        [PSCustomObject]@{
+            ColumnB     = $_.Name
+            TotalHosts  = $total
+            Matched     = $matched
+            Unmatched   = $unmatched
+        }
+    }
+
+# --- Export summary to CSV ---
+$summaryPath = $outputCsv -replace '\.csv$', '_summary.csv'
+$summary | Export-Csv -Path $summaryPath -NoTypeInformation -Encoding UTF8
+
+Write-Output "📊 Summary saved to $summaryPath"
