@@ -1,0 +1,27 @@
+# Clean metadata and markdown from text
+
+def clean_string(s):
+    if not isinstance(s, str):
+        return ""
+    s = unicodedata.normalize("NFKC", s)
+    
+    # Fix common UTF-8-to-Latin-1 decoding artifacts
+    s = s.replace("â€“", "-")    # en dash
+    s = s.replace("â€”", "-")    # em dash
+    s = s.replace("â€˜", "'")    # left single quote
+    s = s.replace("â€™", "'")    # right single quote
+    s = s.replace("â€œ", '"')    # left double quote
+    s = s.replace("â€", '"')    # right double quote
+    s = s.replace("â€¦", "...")  # ellipsis
+    s = s.replace("Â", "")       # stray encoding char
+    s = s.replace("â", "")       # fallback for stray fragment
+    
+    s = s.replace('\u00A0', ' ')
+    s = s.replace('\u200B', '')
+    s = s.replace('\uFEFF', '')
+    s = re.sub(r'[\u2013\u2014]', '-', s)
+    s = re.sub(r'[\u2018\u2019\u201A]', "'", s)
+    s = re.sub(r'[\u201C\u201D\u201E]', '"', s)
+    s = re.sub(r'[^\x00-\x7F]', '', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip().lower()
