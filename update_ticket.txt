@@ -1,0 +1,185 @@
+# JIRA Ticket Update Script
+# This script updates a JIRA ticket using the REST API with a Personal Access Token
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$JiraBaseUrl,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$PersonalAccessToken,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$TicketKey,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Summary,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Description,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Priority,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Assignee,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$Status,
+    
+    [Parameter(Mandatory=$false)]
+    [hashtable]$CustomFields
+)
+
+# Function to update JIRA ticket
+function Update-JiraTicket {
+    param(
+        [string]$BaseUrl,
+        [string]$Token,
+        [string]$IssueKey,
+        [hashtable]$UpdateData
+    )
+    
+    try {
+        # Construct the API URL
+        $apiUrl = "$BaseUrl/rest/api/2/issue/$IssueKey"
+        
+        # Create headers with Personal Access Token
+        $headers = @{
+            'Authorization' = "Bearer $Token"
+            'Content-Type' = 'application/json'
+            'Accept' = 'application/json'
+        }
+        
+        # Convert update data to JSON
+        $jsonBody = $UpdateData | ConvertTo-Json -Depth 10
+        
+        Write-Host "Updating JIRA ticket: $IssueKey" -ForegroundColor Green
+        Write-Host "API URL: $apiUrl" -ForegroundColor Yellow
+        Write-Host "Request Body: $jsonBody" -ForegroundColor Yellow
+        
+        # Make the API call
+        $response = Invoke-RestMethod -Uri $apiUrl -Method PUT -Headers $headers -Body $jsonBody
+        
+        Write-Host "Successfully updated ticket $IssueKey" -ForegroundColor Green
+        return $response
+        
+    } catch {
+        Write-Error "Failed to update JIRA ticket: $($_.Exception.Message)"
+        Write-Error "Response: $($_.Exception.Response)"
+        throw
+    }
+}
+
+# Function to transition ticket status
+function Set-JiraTicketStatus {
+    param(
+        [string]$BaseUrl,
+        [string]$Token,
+        [string]$IssueKey,
+        [string]$StatusName
+    )
+    
+    try {
+        # Get available transitions
+        $transitionsUrl = "$BaseUrl/rest/api/2/issue/$IssueKey/transitions"
+        $headers = @{
+            'Authorization' = "Bearer $Token"
+            'Content-Type' = 'application/json'
+        }
+        
+        $transitions = Invoke-RestMethod -Uri $transitionsUrl -Method GET -Headers $headers
+        
+        # Find the transition ID for the desired status
+        $transition = $transitions.transitions | Where-Object { $_.to.name -eq $StatusName }
+        
+        if ($transition) {
+            $transitionBody = @{
+                transition = @{
+                    id = $transition.id
+                }
+            } | ConvertTo-Json -Depth 3
+            
+            Write-Host "Transitioning ticket $IssueKey to status: $StatusName" -ForegroundColor Green
+            
+            $response = Invoke-RestMethod -Uri $transitionsUrl -Method POST -Headers $headers -Body $transitionBody
+            Write-Host "Successfully transitioned ticket to $StatusName" -ForegroundColor Green
+            
+        } else {
+            Write-Warning "Status '$StatusName' not found in available transitions for ticket $IssueKey"
+            Write-Host "Available transitions:" -ForegroundColor Yellow
+            $transitions.transitions | ForEach-Object { Write-Host "  - $($_.to.name)" -ForegroundColor Yellow }
+        }
+        
+    } catch {
+        Write-Error "Failed to transition ticket status: $($_.Exception.Message)"
+        throw
+    }
+}
+
+# Main script logic
+try {
+    # Build the update payload
+    $updatePayload = @{
+        fields = @{}
+    }
+    
+    # Add fields to update based on provided parameters
+    if ($Summary) {
+        $updatePayload.fields.summary = $Summary
+    }
+    
+    if ($Description) {
+        $updatePayload.fields.description = $Description
+    }
+    
+    if ($Priority) {
+        $updatePayload.fields.priority = @{ name = $Priority }
+    }
+    
+    if ($Assignee) {
+        if ($Assignee -eq "unassigned") {
+            $updatePayload.fields.assignee = $null
+        } else {
+            $updatePayload.fields.assignee = @{ name = $Assignee }
+        }
+    }
+    
+    # Add custom fields if provided
+    if ($CustomFields) {
+        foreach ($field in $CustomFields.GetEnumerator()) {
+            $updatePayload.fields[$field.Key] = $field.Value
+        }
+    }
+    
+    # Update the ticket if there are fields to update
+    if ($updatePayload.fields.Count -gt 0) {
+        Update-JiraTicket -BaseUrl $JiraBaseUrl -Token $PersonalAccessToken -IssueKey $TicketKey -UpdateData $updatePayload
+    }
+    
+    # Handle status transition separately (if provided)
+    if ($Status) {
+        Set-JiraTicketStatus -BaseUrl $JiraBaseUrl -Token $PersonalAccessToken -IssueKey $TicketKey -StatusName $Status
+    }
+    
+    Write-Host "JIRA ticket update completed successfully!" -ForegroundColor Green
+    
+} catch {
+    Write-Error "Script execution failed: $($_.Exception.Message)"
+    exit 1
+}
+
+# Example usage (commented out):
+<#
+# Basic usage:
+.\Update-JiraTicket.ps1 -JiraBaseUrl "https://your-jira-server.com" -PersonalAccessToken "your-token-here" -TicketKey "PROJ-123" -Summary "Updated summary" -Description "Updated description"
+
+# With custom fields:
+$customFields = @{
+    "customfield_10001" = "Custom value"
+    "customfield_10002" = @{ value = "Option 1" }
+}
+.\Update-JiraTicket.ps1 -JiraBaseUrl "https://your-jira-server.com" -PersonalAccessToken "your-token-here" -TicketKey "PROJ-123" -CustomFields $customFields
+
+# Change status:
+.\Update-JiraTicket.ps1 -JiraBaseUrl "https://your-jira-server.com" -PersonalAccessToken "your-token-here" -TicketKey "PROJ-123" -Status "In Progress"
+#>
