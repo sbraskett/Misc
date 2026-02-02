@@ -1,0 +1,26 @@
+Private Sub CenterLabelVertically(ByVal L As MSForms.Label)
+
+    If L.Caption = vbNullString Then Exit Sub
+
+    Dim tmp As MSForms.Label
+    Set tmp = pFrame.Controls.Add("Forms.Label.1")
+
+    With tmp
+        .Visible = False
+        .Width = L.Width
+        .WordWrap = True
+        .Font.Name = L.Font.Name
+        .Font.Size = L.Font.Size
+        .Font.Bold = L.Font.Bold
+        .Caption = L.Caption
+        .AutoSize = True
+    End With
+
+    Dim textH As Single
+    textH = tmp.Height
+
+    pFrame.Controls.Remove tmp.Name
+
+    L.Top = L.Top + (L.Height - textH) / 2
+
+End Sub
