@@ -1,0 +1,131 @@
+Public Function SelectedValuesArray(ByVal DisplayColIndex As Long, Optional ByVal IncludeHeaderRow As Boolean = False) As Variant
+    'Returns a 1D variant array of the selected values in the given display column.
+
+    If DisplayColIndex < 0 Or DisplayColIndex > Me.ColumnsCount - 1 Then
+        Err.Raise 123, "clsDesignListBox", "SelectedValuesArray: bad column index"
+    End If
+
+    Dim rowsV As Variant
+    rowsV = SelectedRowsArray(IncludeHeaderRow)
+    If IsEmpty(rowsV) Then
+        SelectedValuesArray = Empty
+        Exit Function
+    End If
+
+    Dim n As Long, i As Long
+    n = UBound(rowsV) - LBound(rowsV) + 1
+
+    Dim out() As Variant
+    ReDim out(0 To n - 1)
+
+    Dim srcRow As Long, srcCol As Long
+
+    For i = 0 To n - 1
+        srcRow = CLng(rowsV(LBound(rowsV) + i)) + GetDeviation("Rows")
+
+        'If you have column map:
+        'srcCol = SrcCol(DisplayColIndex) + GetDeviation("Columns")
+        srcCol = DisplayColIndex + GetDeviation("Columns")
+
+        out(i) = pInpArr(srcRow, srcCol)
+    Next i
+
+    SelectedValuesArray = out
+End Function
+
+Public Function SelectedRows2D(Optional ByVal IncludeHeaderRow As Boolean = False) As Variant
+    'Returns a 2D variant array: (0..n-1, 0..cols-1) of the selected rows.
+    'If none selected: returns Empty.
+
+    Dim rowsV As Variant
+    rowsV = SelectedRowsArray(IncludeHeaderRow)
+    If IsEmpty(rowsV) Then
+        SelectedRows2D = Empty
+        Exit Function
+    End If
+
+    Dim n As Long, c As Long, r As Long
+    n = UBound(rowsV) - LBound(rowsV) + 1
+
+    Dim outArr() As Variant
+    ReDim outArr(0 To n - 1, 0 To Me.ColumnsCount - 1)
+
+    Dim srcRow As Long, srcCol As Long
+    Dim dispIdx As Long
+
+    For r = 0 To n - 1
+        srcRow = CLng(rowsV(LBound(rowsV) + r)) + GetDeviation("Rows")
+
+        For c = 0 To Me.ColumnsCount - 1
+            'If you implemented column reordering, map display->source here:
+            'srcCol = SrcCol(c) + GetDeviation("Columns")
+            srcCol = c + GetDeviation("Columns")
+
+            outArr(r, c) = pInpArr(srcRow, srcCol)
+        Next c
+    Next r
+
+    SelectedRows2D = outArr
+End Function
+
+Public Function SelectedRowsArray(Optional ByVal IncludeHeaderRow As Boolean = False) As Variant
+    'Returns a 0-based Long array of selected row indices, sorted ascending.
+    'If none selected: returns Empty.
+
+    Dim k As Variant, n As Long, i As Long
+    Dim tmp() As Long
+
+    If pSelectedRows Is Nothing Then
+        SelectedRowsArray = Empty
+        Exit Function
+    End If
+    If pSelectedRows.Count = 0 Then
+        SelectedRowsArray = Empty
+        Exit Function
+    End If
+
+    ReDim tmp(0 To pSelectedRows.Count - 1)
+
+    i = 0
+    For Each k In pSelectedRows.Keys
+        tmp(i) = CLng(k)
+        i = i + 1
+    Next k
+
+    Call SortLong1DInPlace(tmp)
+
+    'Optionally remove header row (row 0) if you don't want it
+    If (Not IncludeHeaderRow) And Me.Headers Then
+        If tmp(0) = 0 Then
+            'shift down by one
+            If UBound(tmp) = 0 Then
+                SelectedRowsArray = Empty
+                Exit Function
+            End If
+
+            Dim out() As Long
+            ReDim out(0 To UBound(tmp) - 1)
+            For i = 1 To UBound(tmp)
+                out(i - 1) = tmp(i)
+            Next i
+            SelectedRowsArray = out
+            Exit Function
+        End If
+    End If
+
+    SelectedRowsArray = tmp
+End Function
+
+Private Sub SortLong1DInPlace(ByRef a() As Long)
+    'Simple insertion sort (fast enough for <= 50 rows)
+    Dim i As Long, j As Long, v As Long
+    For i = LBound(a) + 1 To UBound(a)
+        v = a(i)
+        j = i - 1
+        Do While j >= LBound(a) And a(j) > v
+            a(j + 1) = a(j)
+            j = j - 1
+        Loop
+        a(j + 1) = v
+    Next i
+End Sub
