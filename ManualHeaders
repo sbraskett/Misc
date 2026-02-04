@@ -1,0 +1,30 @@
+Dim arr As Variant
+arr = GetMarketPriceArr()          'your data (n x 4)
+
+'Build a new array with a header row
+Dim out As Variant
+Dim r As Long, c As Long
+Dim rows As Long, cols As Long
+
+rows = UBound(arr, 1) - LBound(arr, 1) + 1
+cols = UBound(arr, 2) - LBound(arr, 2) + 1
+
+ReDim out(0 To rows, 0 To cols - 1)
+
+'headers
+out(0, 0) = "Rank"
+out(0, 1) = "Symbol"
+out(0, 2) = "Name"
+out(0, 3) = "Price"
+
+'copy data down 1 row
+For r = 0 To rows - 1
+    For c = 0 To cols - 1
+        out(r + 1, c) = arr(LBound(arr, 1) + r, LBound(arr, 2) + c)
+    Next c
+Next r
+
+With pDesignListBox
+    .Headers = True
+    .Create Me, 6, 6, 330, 300, out
+End With
