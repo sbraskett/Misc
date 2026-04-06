@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Decision Tree Survey Builder with Progress Panel</title>
+<style>
+  :root{--bg:#f4f7fb;--panel:#ffffff;--text:#1f2937;--muted:#6b7280;--border:#d1d5db;--accent:#2563eb;--accent-dark:#1d4ed8;--ok:#065f46;--ok-bg:#ecfdf5;--warn:#92400e;--warn-bg:#fff7ed;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text);}
+  .wrap{max-width:1280px;margin:0 auto;padding:24px;}
+  h1{margin:0 0 8px 0;font-size:28px;}
+  .sub{margin:0 0 20px 0;color:var(--muted);}
+  .grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px;}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  .section-label{display:inline-block;margin-bottom:10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
+  .field{margin-bottom:14px;}
+  .field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px;}
+  .field input[type="text"], .field textarea{width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font:inherit;background:#fff;}
+  .json-box{min-height:500px;resize:vertical;font-family:Consolas,"Courier New",monospace;font-size:13px;background:#fbfdff;}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;}
+  button{font:inherit;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:10px 14px;cursor:pointer;}
+  button:hover{border-color:var(--accent);}
+  .primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .primary:hover{background:var(--accent-dark);border-color:var(--accent-dark);}
+  .muted{color:var(--muted);}
+  .status{margin-top:14px;border-radius:10px;padding:12px 14px;display:none;white-space:pre-wrap;}
+  .status.ok{display:block;background:var(--ok-bg);color:var(--ok);border:1px solid #a7f3d0;}
+  .status.warn{display:block;background:var(--warn-bg);color:var(--warn);border:1px solid #fdba74;}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .hint{font-size:13px;color:var(--muted);line-height:1.45;}
+  .preview{background:#fbfdff;border:1px solid var(--border);border-radius:10px;padding:12px;max-height:360px;overflow:auto;}
+  .preview .node{border-top:1px solid #eef2f7;padding:10px 0;}
+  .preview .node:first-child{border-top:none;padding-top:0;}
+  .badge{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;margin-right:6px;margin-bottom:6px;}
+  @media (max-width:980px){.grid{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Decision Tree Survey Builder</h1>
+  <p class="sub">This version generates a survey with a simple graphical progress panel showing completed steps, the current question, and the final outcome.</p>
+  <div class="grid">
+    <section class="card">
+      <div class="section-label">Builder controls</div>
+      <div class="two-col">
+        <div class="field">
+          <label for="surveyTitle">Survey title</label>
+          <input id="surveyTitle" type="text" value="Offline Decision Tree Survey">
+        </div>
+        <div class="field">
+          <label for="outputFilename">Output filename</label>
+          <input id="outputFilename" type="text" value="decision_tree_survey_progress.html">
+        </div>
+      </div>
+      <div class="field">
+        <label for="surveySubtitle">Survey subtitle</label>
+        <input id="surveySubtitle" type="text" value="Offline, self-contained survey with graphical step progress.">
+      </div>
+      <div class="field">
+        <label for="flowEditor">Flow JSON</label>
+        <textarea id="flowEditor" class="json-box" spellcheck="false"></textarea>
+      </div>
+      <div class="toolbar">
+        <button id="validateBtn">Validate Flow</button>
+        <button id="previewBtn">Refresh Preview</button>
+        <button id="loadSampleBtn">Load Sample</button>
+        <button id="copyJsonBtn">Copy JSON</button>
+        <button id="generateBtn" class="primary">Generate Survey HTML</button>
+      </div>
+      <div id="statusBox" class="status"></div>
+    </section>
+    <aside class="card">
+      <div class="section-label">Preview and notes</div>
+      <div style="margin-bottom:8px;">
+        <span class="badge">Progress panel</span>
+        <span class="badge">Standalone output</span>
+        <span class="badge">No upload needed</span>
+      </div>
+      <div class="field">
+        <label>Flow preview</label>
+        <div id="previewBox" class="preview"></div>
+      </div>
+      <p class="hint">The generated survey shows a stacked step-trace on the right. Completed questions appear as connected boxes, the current question is highlighted, and the final result appears when reached.</p>
+    </aside>
+  </div>
+</div>
+<script>
+const SAMPLE_FLOW = {"start":{"type":"question","title":"Are you working on a production issue?","help":"Choose the answer that best matches the situation.","answers":[{"label":"Yes","next":"impact"},{"label":"No","next":"change_request"}]},"impact":{"type":"question","title":"Is customer impact confirmed?","answers":[{"label":"Yes","next":"sev1"},{"label":"No","next":"internal_only"}]},"change_request":{"type":"question","title":"Is this a standard pre-approved change?","answers":[{"label":"Yes","next":"standard_change"},{"label":"No","next":"review_board"}]},"sev1":{"type":"result","title":"Escalate as Sev 1","resultText":"Open the major incident process, notify the response team, and begin live triage immediately."},"internal_only":{"type":"question","title":"Can the issue wait for the next business day?","answers":[{"label":"Yes","next":"defer_ticket"},{"label":"No","next":"after_hours_support"}]},"standard_change":{"type":"result","title":"Proceed with standard change path","resultText":"Document the change, confirm the checklist, and execute during the approved window."},"review_board":{"type":"result","title":"Route to change review board","resultText":"Collect impact details, rollback plan, and approvals before scheduling."},"defer_ticket":{"type":"result","title":"Create ticket for next business day","resultText":"Log the issue with supporting details and assign it to the daytime operations queue."},"after_hours_support":{"type":"result","title":"Engage after-hours support","resultText":"Follow the on-call escalation path and capture troubleshooting notes."}};
+
+const SURVEY_TEMPLATE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>__SURVEY_TITLE__</title>
+<style>
+:root{--bg:#f5f7fb;--panel:#ffffff;--text:#1f2937;--muted:#6b7280;--border:#d1d5db;--accent:#2563eb;--done:#065f46;--done-bg:#ecfdf5;--current:#1d4ed8;--current-bg:#eff6ff;--result:#7c3aed;--result-bg:#f5f3ff;}
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text);} .wrap{max-width:1150px;margin:0 auto;padding:24px;} .title{margin:0 0 6px 0;font-size:28px;} .subtitle{margin:0 0 20px 0;color:var(--muted);} .grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;} .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04);} .label{display:inline-block;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px;} .question{font-size:24px;margin:0 0 18px 0;line-height:1.3;} .help{margin:0 0 18px 0;color:var(--muted);line-height:1.45;} .answers{display:grid;gap:12px;} button{font:inherit} .answer-btn,.toolbar button{border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;} .answer-btn:hover,.toolbar button:hover{border-color:var(--accent);} .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;} .result{background:var(--done-bg);border:1px solid #a7f3d0;border-radius:12px;padding:16px;margin-top:12px;} .result h3{margin:0 0 10px 0;color:var(--done);} .progress-wrap{position:relative;padding-left:14px;} .progress-wrap:before{content:"";position:absolute;left:22px;top:10px;bottom:10px;width:2px;background:#dbe4ee;} .step-card{position:relative;margin:0 0 14px 0;padding:12px 12px 12px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;} .step-card:before{content:"";position:absolute;left:-6px;top:18px;width:12px;height:12px;border-radius:50%;background:#cbd5e1;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;} .step-card.done{background:var(--done-bg);border-color:#a7f3d0;} .step-card.done:before{background:var(--done);box-shadow:0 0 0 1px var(--done);} .step-card.current{background:var(--current-bg);border-color:#93c5fd;} .step-card.current:before{background:var(--current);box-shadow:0 0 0 1px var(--current);} .step-card.result-node{background:var(--result-bg);border-color:#c4b5fd;} .step-card.result-node:before{background:var(--result);box-shadow:0 0 0 1px var(--result);} .step-kicker{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px;} .step-title{font-weight:700;line-height:1.35;} .step-answer,.step-detail,.note{margin-top:6px;color:var(--muted);font-size:14px;line-height:1.4;} @media (max-width:860px){.grid{grid-template-columns:1fr}}
+</style></head>
+<body><div class="wrap"><h1 class="title">__SURVEY_TITLE__</h1><p class="subtitle">__SURVEY_SUBTITLE__</p><div class="grid"><section class="card"><div class="label">Survey</div><div id="app"></div></section><aside class="card"><div class="label">Progress</div><div id="progressBox"></div><p class="note">This is a simplified graphical path view. It shows the route already taken and the current position.</p></aside></div></div>
+<script>
+const FLOW = __FLOW_JSON__; let currentNodeId = "start"; let history = []; const app = document.getElementById("app"); const progressBox = document.getElementById("progressBox");
+function render(){ const node = FLOW[currentNodeId]; if (!node){ app.innerHTML = '<div class="result" style="background:#fff7ed;border-color:#fdba74;"><h3 style="color:#9a3412;margin-top:0;">Flow error</h3><p>The current node was not found: <strong>' + escapeHtml(currentNodeId) + '</strong></p></div>' + renderCommonControls(); renderProgress(); bindButtons(); return; }
+if (node.type === "question"){ const answersHtml = (node.answers || []).map((a, i) => '<button class="answer-btn" data-answer-index="' + i + '">' + escapeHtml(a.label) + '</button>').join(''); app.innerHTML = '<div class="label">Current question</div><h2 class="question">' + escapeHtml(node.title || '') + '</h2>' + (node.help ? '<p class="help">' + escapeHtml(node.help) + '</p>' : '') + '<div class="answers">' + answersHtml + '</div>' + renderCommonControls(); document.querySelectorAll('[data-answer-index]').forEach(btn => { btn.addEventListener('click', () => { const idx = Number(btn.getAttribute('data-answer-index')); const answer = node.answers[idx]; history.push({nodeId: currentNodeId, question: node.title || currentNodeId, answer: answer.label, next: answer.next}); currentNodeId = answer.next; render(); }); }); }
+else if (node.type === "result"){ app.innerHTML = '<div class="label">Outcome</div><div class="result"><h3>' + escapeHtml(node.title || 'Result') + '</h3><p>' + escapeHtml(node.resultText || '') + '</p></div>' + renderCommonControls(true); }
+else { app.innerHTML = '<div class="result" style="background:#fff7ed;border-color:#fdba74;"><h3 style="color:#9a3412;margin-top:0;">Flow error</h3><p>Unsupported node type for <strong>' + escapeHtml(currentNodeId) + '</strong>.</p></div>' + renderCommonControls(); }
+renderProgress(); bindButtons(); }
+function renderCommonControls(atResult = false){ return '<div class="toolbar"><button id="backBtn"' + (history.length === 0 ? ' disabled' : '') + '>Back</button><button id="restartBtn">Restart</button><button id="copyPathBtn">Copy Path</button><button id="downloadPathBtn">' + (atResult ? 'Download Result' : 'Download Path') + '</button></div>'; }
+function renderProgress(){ const node = FLOW[currentNodeId]; let html = '<div class="progress-wrap">'; if (history.length === 0 && node && node.type === 'question'){ html += '<div class="step-card current"><div class="step-kicker">Current question</div><div class="step-title">' + escapeHtml(node.title || currentNodeId) + '</div>' + (node.help ? '<div class="step-detail">' + escapeHtml(node.help) + '</div>' : '') + '</div>'; } else { history.forEach((h, idx) => { html += '<div class="step-card done"><div class="step-kicker">Completed step ' + (idx + 1) + '</div><div class="step-title">' + escapeHtml(h.question) + '</div><div class="step-answer">Answer chosen: ' + escapeHtml(h.answer) + '</div></div>'; }); if (node && node.type === 'question'){ html += '<div class="step-card current"><div class="step-kicker">Current question</div><div class="step-title">' + escapeHtml(node.title || currentNodeId) + '</div>' + (node.help ? '<div class="step-detail">' + escapeHtml(node.help) + '</div>' : '') + '</div>'; } if (node && node.type === 'result'){ html += '<div class="step-card result-node"><div class="step-kicker">Final outcome</div><div class="step-title">' + escapeHtml(node.title || 'Result') + '</div>' + (node.resultText ? '<div class="step-detail">' + escapeHtml(node.resultText) + '</div>' : '') + '</div>'; } } html += '</div>'; progressBox.innerHTML = html; }
+function bindButtons(){ const backBtn = document.getElementById('backBtn'); const restartBtn = document.getElementById('restartBtn'); const copyPathBtn = document.getElementById('copyPathBtn'); const downloadPathBtn = document.getElementById('downloadPathBtn'); if (backBtn) backBtn.addEventListener('click', goBack); if (restartBtn) restartBtn.addEventListener('click', restartFlow); if (copyPathBtn) copyPathBtn.addEventListener('click', copyPath); if (downloadPathBtn) downloadPathBtn.addEventListener('click', downloadPath); }
+function goBack(){ if (history.length === 0) return; const last = history.pop(); currentNodeId = last.nodeId; render(); }
+function restartFlow(){ currentNodeId = 'start'; history = []; render(); }
+async function copyPath(){ const text = buildPathReport(); try{ await navigator.clipboard.writeText(text); alert('Path copied to clipboard.'); } catch(e){ alert('Clipboard copy was blocked by the browser. Use Download Path instead.'); } }
+function downloadPath(){ const text = buildPathReport(); const blob = new Blob([text], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); const url = URL.createObjectURL(blob); a.href = url; a.download = 'decision-tree-path.txt'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+function buildPathReport(){ const node = FLOW[currentNodeId]; let lines = []; lines.push('__SURVEY_TITLE__'); lines.push('========================'); lines.push(''); history.forEach((h, idx) => { lines.push('Step ' + (idx + 1)); lines.push('Question: ' + h.question); lines.push('Answer: ' + h.answer); lines.push(''); }); lines.push('Current Node: ' + currentNodeId); if (node && node.type === 'result'){ lines.push('Result: ' + (node.title || '')); if (node.resultText) lines.push('Details: ' + node.resultText); } else if (node && node.type === 'question'){ lines.push('Current Question: ' + (node.title || '')); } return lines.join('\\n'); }
+function escapeHtml(text){ return String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
+render();
+__SCRIPT_CLOSE__
+</body></html>`;
+
+const flowEditor = document.getElementById('flowEditor');
+const surveyTitle = document.getElementById('surveyTitle');
+const surveySubtitle = document.getElementById('surveySubtitle');
+const outputFilename = document.getElementById('outputFilename');
+const previewBox = document.getElementById('previewBox');
+const statusBox = document.getElementById('statusBox');
+
+flowEditor.value = JSON.stringify(SAMPLE_FLOW, null, 2);
+
+document.getElementById('loadSampleBtn').addEventListener('click', () => { flowEditor.value = JSON.stringify(SAMPLE_FLOW, null, 2); setStatus('Loaded sample flow.', true); refreshPreview(); });
+document.getElementById('validateBtn').addEventListener('click', () => { try{ const flow = parseFlow(); validateFlow(flow); setStatus('Flow is valid.\nNodes: ' + Object.keys(flow).length, true); } catch (err){ setStatus(err.message, false); } });
+document.getElementById('previewBtn').addEventListener('click', refreshPreview);
+document.getElementById('copyJsonBtn').addEventListener('click', async () => { try{ await navigator.clipboard.writeText(flowEditor.value); setStatus('JSON copied to clipboard.', true); } catch (err){ setStatus('Clipboard copy was blocked by the browser.', false); } });
+document.getElementById('generateBtn').addEventListener('click', () => { try{ const flow = parseFlow(); validateFlow(flow); const output = buildSurveyHtml(flow, surveyTitle.value.trim() || 'Offline Decision Tree Survey', surveySubtitle.value.trim() || ''); const filename = sanitizeFilename(outputFilename.value.trim() || 'decision_tree_survey_progress.html'); downloadTextFile(filename, output, 'text/html;charset=utf-8'); setStatus('Survey HTML generated successfully.\nFile: ' + filename, true); } catch (err){ setStatus(err.message, false); } });
+
+function parseFlow(){ try{ return JSON.parse(flowEditor.value); } catch (err){ throw new Error('Invalid JSON: ' + err.message); } }
+function validateFlow(candidate){
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error('Flow must be a JSON object.');
+  if (!candidate.start) throw new Error('Flow must contain a "start" node.');
+  for (const [id, node] of Object.entries(candidate)){
+    if (!node.type) throw new Error('Node "' + id + '" is missing "type".');
+    if (node.type === 'question'){
+      if (typeof node.title !== 'string' || !node.title.trim()) throw new Error('Question node "' + id + '" must have a non-empty "title".');
+      if (!Array.isArray(node.answers) || node.answers.length === 0) throw new Error('Question node "' + id + '" must have a non-empty "answers" array.');
+      node.answers.forEach((a, idx) => {
+        if (!a || typeof a !== 'object') throw new Error('Question node "' + id + '" answer ' + (idx + 1) + ' is invalid.');
+        if (!a.label || !a.next) throw new Error('Question node "' + id + '" answer ' + (idx + 1) + ' must include "label" and "next".');
+        if (!candidate[a.next]) throw new Error('Question node "' + id + '" answer "' + a.label + '" points to missing node "' + a.next + '".');
+      });
+    } else if (node.type === 'result'){
+      if (typeof node.title !== 'string' || !node.title.trim()) throw new Error('Result node "' + id + '" must have a non-empty "title".');
+    } else {
+      throw new Error('Node "' + id + '" has unsupported type "' + node.type + '". Use "question" or "result".');
+    }
+  }
+}
+function refreshPreview(){
+  try{
+    const flow = parseFlow(); validateFlow(flow);
+    const html = Object.entries(flow).map(([id, node]) => {
+      if (node.type === 'question'){
+        const answers = node.answers.map(a => '• ' + escapeHtml(a.label) + ' → <strong>' + escapeHtml(a.next) + '</strong>').join('<br>');
+        return '<div class="node"><strong>' + escapeHtml(id) + '</strong> <span class="muted">(' + escapeHtml(node.type) + ')</span><br>' + escapeHtml(node.title || '') + '<div class="hint" style="margin-top:8px;">' + answers + '</div></div>';
+      }
+      return '<div class="node"><strong>' + escapeHtml(id) + '</strong> <span class="muted">(' + escapeHtml(node.type) + ')</span><br>' + escapeHtml(node.title || '') + (node.resultText ? '<div class="hint" style="margin-top:8px;">' + escapeHtml(node.resultText) + '</div>' : '') + '</div>';
+    }).join('');
+    previewBox.innerHTML = html || '<div class="muted">No nodes to preview.</div>';
+    setStatus('Preview refreshed. Nodes: ' + Object.keys(flow).length, true);
+  } catch (err){
+    previewBox.innerHTML = '<div class="muted">Preview unavailable.</div>';
+    setStatus(err.message, false);
+  }
+}
+function buildSurveyHtml(flow, title, subtitle){
+  return SURVEY_TEMPLATE.replaceAll('__SURVEY_TITLE__', escapeForTemplate(title)).replaceAll('__SURVEY_SUBTITLE__', escapeForTemplate(subtitle)).replace('__FLOW_JSON__', JSON.stringify(flow, null, 2)).replace('__SCRIPT_CLOSE__', '</' + 'script>');
+}
+function escapeForTemplate(text){ return String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
+function sanitizeFilename(name){ let out = name.replace(/[\\/:*?"<>|]+/g, '_').trim(); if (!out.toLowerCase().endsWith('.html')) out += '.html'; return out || 'decision_tree_survey_progress.html'; }
+function downloadTextFile(filename, text, mimeType){ const blob = new Blob([text], { type: mimeType }); const a = document.createElement('a'); const url = URL.createObjectURL(blob); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+function setStatus(message, isOk){ statusBox.className = 'status ' + (isOk ? 'ok' : 'warn'); statusBox.textContent = message; }
+function escapeHtml(text){ return String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
+refreshPreview();
+</script>
+</body>
+</html>
