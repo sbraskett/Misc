@@ -1,0 +1,407 @@
+Option Explicit
+
+Public Type HtmlTextSegment
+    Text As String
+    Bold As Boolean
+    Italic As Boolean
+    Underline As Boolean
+    IsBullet As Boolean
+    BulletLevel As Long
+    ParagraphIndex As Long
+    ColorValue As Long
+    HasColor As Boolean
+    StartPos As Long
+    TextLength As Long
+End Type
+
+Sub Test_WriteHtmlToTextbox()
+    Dim sld As Slide
+    Dim shp As Shape
+    Dim html As String
+    
+    Set sld = ActivePresentation.Slides(1)
+    Set shp = sld.Shapes.AddTextbox(msoTextOrientationHorizontal, 100, 100, 500, 300)
+    
+    html = "<p>This is <b>bold</b>, <i>italic</i>, <u>underlined</u>, and <span style='color:red'>red</span>.</p>" & _
+           "<ul><li>First bullet</li><li><b>Second</b> bullet</li></ul>"
+    
+    WriteHtmlToPowerPointShape_HighPerf html, shp
+End Sub
+
+
+Public Sub WriteHtmlToPowerPointShape_HighPerf(ByVal html As String, ByVal shp As Shape)
+    Dim segments() As HtmlTextSegment
+    Dim segCount As Long
+    
+    Dim fullText As String
+    Dim paraBullet() As Boolean
+    Dim paraLevel() As Long
+    Dim paraCount As Long
+    
+    ParseSimpleHtmlToSegments html, segments, segCount, paraBullet, paraLevel, paraCount
+    fullText = BuildFullTextAndMapPositions(segments, segCount)
+    
+    With shp.TextFrame
+        .WordWrap = msoTrue
+        .TextRange.Text = fullText
+    End With
+    
+    ApplyParagraphFormatting shp.TextFrame.TextRange, paraBullet, paraLevel, paraCount
+    ApplyCharacterFormattingRuns shp.TextFrame.TextRange, segments, segCount
+End Sub
+
+Public Sub ParseSimpleHtmlToSegments( _
+    ByVal html As String, _
+    ByRef segments() As HtmlTextSegment, _
+    ByRef segCount As Long, _
+    ByRef paraBullet() As Boolean, _
+    ByRef paraLevel() As Long, _
+    ByRef paraCount As Long)
+
+    Dim doc As Object
+    Set doc = CreateObject("HTMLFILE")
+    
+    doc.body.innerHTML = html
+    
+    ReDim segments(1 To 1)
+    ReDim paraBullet(1 To 1)
+    ReDim paraLevel(1 To 1)
+    
+    paraCount = 1
+    paraBullet(1) = False
+    paraLevel(1) = 0
+    
+    WalkHtmlNodes doc.body, segments, segCount, _
+                  False, False, False, False, 0, _
+                  paraBullet, paraLevel, paraCount
+End Sub
+
+Private Sub WalkHtmlNodes( _
+    ByVal node As Object, _
+    ByRef segments() As HtmlTextSegment, _
+    ByRef segCount As Long, _
+    ByVal curBold As Boolean, _
+    ByVal curItalic As Boolean, _
+    ByVal curUnderline As Boolean, _
+    ByVal curHasColor As Boolean, _
+    ByVal curColor As Long, _
+    ByRef paraBullet() As Boolean, _
+    ByRef paraLevel() As Long, _
+    ByRef paraCount As Long)
+
+    Dim child As Object
+    Dim tagName As String
+    
+    Dim nextBold As Boolean
+    Dim nextItalic As Boolean
+    Dim nextUnderline As Boolean
+    Dim nextHasColor As Boolean
+    Dim nextColor As Long
+    
+    If node Is Nothing Then Exit Sub
+    
+    If node.nodeType = 3 Then
+        If Len(node.nodeValue) > 0 Then
+            AddSegment segments, segCount, node.nodeValue, _
+                       curBold, curItalic, curUnderline, _
+                       False, 0, paraCount, curHasColor, curColor
+        End If
+        Exit Sub
+    End If
+    
+    On Error Resume Next
+    tagName = LCase$(node.nodeName)
+    On Error GoTo 0
+    
+    nextBold = curBold
+    nextItalic = curItalic
+    nextUnderline = curUnderline
+    nextHasColor = curHasColor
+    nextColor = curColor
+    
+    Select Case tagName
+        Case "b", "strong"
+            nextBold = True
+            
+        Case "i", "em"
+            nextItalic = True
+            
+        Case "u"
+            nextUnderline = True
+            
+        Case "span", "font"
+            If TryGetNodeColor(node, nextColor) Then
+                nextHasColor = True
+            End If
+            
+        Case "br"
+            AddSegment segments, segCount, vbCrLf, False, False, False, False, 0, paraCount, False, 0
+            paraCount = paraCount + 1
+            GrowParagraphArrays paraBullet, paraLevel, paraCount
+            
+        Case "p", "div"
+            If segCount > 0 Then
+                AddSegment segments, segCount, vbCrLf, False, False, False, False, 0, paraCount, False, 0
+                paraCount = paraCount + 1
+                GrowParagraphArrays paraBullet, paraLevel, paraCount
+            End If
+            
+        Case "ul"
+            ' handled by li
+        Case "li"
+            If segCount > 0 Then
+                AddSegment segments, segCount, vbCrLf, False, False, False, False, 0, paraCount, False, 0
+                paraCount = paraCount + 1
+                GrowParagraphArrays paraBullet, paraLevel, paraCount
+            End If
+            
+            paraBullet(paraCount) = True
+            paraLevel(paraCount) = 1
+    End Select
+    
+    For Each child In node.childNodes
+        WalkHtmlNodes child, segments, segCount, _
+                      nextBold, nextItalic, nextUnderline, nextHasColor, nextColor, _
+                      paraBullet, paraLevel, paraCount
+    Next child
+End Sub
+
+Private Sub AddSegment( _
+    ByRef segments() As HtmlTextSegment, _
+    ByRef segCount As Long, _
+    ByVal txt As String, _
+    ByVal isBold As Boolean, _
+    ByVal isItalic As Boolean, _
+    ByVal isUnderline As Boolean, _
+    ByVal isBullet As Boolean, _
+    ByVal bulletLevel As Long, _
+    ByVal paraIndex As Long, _
+    ByVal hasColor As Boolean, _
+    ByVal colorVal As Long)
+
+    If Len(txt) = 0 Then Exit Sub
+    
+    segCount = segCount + 1
+    If segCount > UBound(segments) Then
+        ReDim Preserve segments(1 To segCount * 2)
+    End If
+    
+    With segments(segCount)
+        .Text = DecodeHtmlEntities(txt)
+        .Bold = isBold
+        .Italic = isItalic
+        .Underline = isUnderline
+        .IsBullet = isBullet
+        .BulletLevel = bulletLevel
+        .ParagraphIndex = paraIndex
+        .HasColor = hasColor
+        .ColorValue = colorVal
+    End With
+End Sub
+
+Private Function BuildFullTextAndMapPositions( _
+    ByRef segments() As HtmlTextSegment, _
+    ByVal segCount As Long) As String
+
+    Dim i As Long
+    Dim pos As Long
+    Dim s As String
+    
+    pos = 1
+    s = vbNullString
+    
+    For i = 1 To segCount
+        segments(i).StartPos = pos
+        segments(i).TextLength = Len(segments(i).Text)
+        
+        s = s & segments(i).Text
+        pos = pos + segments(i).TextLength
+    Next i
+    
+    BuildFullTextAndMapPositions = CleanupExtraBreaks(s)
+End Function
+
+Private Sub ApplyParagraphFormatting( _
+    ByVal tr As TextRange, _
+    ByRef paraBullet() As Boolean, _
+    ByRef paraLevel() As Long, _
+    ByVal paraCount As Long)
+
+    Dim i As Long
+    Dim paraTotal As Long
+    
+    paraTotal = tr.Paragraphs.Count
+    If paraTotal < paraCount Then paraCount = paraTotal
+    
+    For i = 1 To paraCount
+        With tr.Paragraphs(i).ParagraphFormat
+            .Bullet.Visible = IIf(paraBullet(i), msoTrue, msoFalse)
+            
+            If paraBullet(i) Then
+                On Error Resume Next
+                .IndentLevel = paraLevel(i)
+                On Error GoTo 0
+            End If
+        End With
+    Next i
+End Sub
+
+Private Sub ApplyCharacterFormattingRuns(ByVal tr As TextRange, ByRef segments() As HtmlTextSegment, ByVal segCount As Long)
+    Dim i As Long
+    Dim runStart As Long
+    Dim runLen As Long
+    Dim j As Long
+    
+    i = 1
+    Do While i <= segCount
+        If segments(i).TextLength > 0 And segments(i).Text <> vbCrLf Then
+            runStart = segments(i).StartPos
+            runLen = segments(i).TextLength
+            
+            j = i + 1
+            Do While j <= segCount
+                If CanMergeSegments(segments(i), segments(j)) Then
+                    runLen = runLen + segments(j).TextLength
+                    j = j + 1
+                Else
+                    Exit Do
+                End If
+            Loop
+            
+            ApplyFormatToRange tr.Characters(runStart, runLen), segments(i)
+            i = j
+        Else
+            i = i + 1
+        End If
+    Loop
+End Sub
+
+Private Function CanMergeSegments(ByRef a As HtmlTextSegment, ByRef b As HtmlTextSegment) As Boolean
+    If b.Text = vbCrLf Then Exit Function
+    
+    CanMergeSegments = _
+        (a.Bold = b.Bold) And _
+        (a.Italic = b.Italic) And _
+        (a.Underline = b.Underline) And _
+        (a.HasColor = b.HasColor) And _
+        (a.ColorValue = b.ColorValue)
+End Function
+
+Private Sub ApplyFormatToRange(ByVal tr As TextRange, ByRef seg As HtmlTextSegment)
+    With tr.Font
+        .Bold = IIf(seg.Bold, msoTrue, msoFalse)
+        .Italic = IIf(seg.Italic, msoTrue, msoFalse)
+        .Underline = IIf(seg.Underline, msoTrue, msoFalse)
+        
+        If seg.HasColor Then
+            .Color.RGB = seg.ColorValue
+        End If
+    End With
+End Sub
+
+Private Function TryGetNodeColor(ByVal node As Object, ByRef colorVal As Long) As Boolean
+    Dim styleText As String
+    Dim colorText As String
+    
+    On Error Resume Next
+    styleText = CStr(node.getAttribute("style"))
+    On Error GoTo 0
+    
+    If Len(styleText) = 0 Then Exit Function
+    
+    colorText = ExtractStyleProperty(styleText, "color")
+    If Len(colorText) = 0 Then Exit Function
+    
+    If ParseCssColor(colorText, colorVal) Then
+        TryGetNodeColor = True
+    End If
+End Function
+
+Private Function ExtractStyleProperty(ByVal styleText As String, ByVal propName As String) As String
+    Dim parts() As String
+    Dim i As Long
+    Dim p As Long
+    Dim key As String
+    Dim val As String
+    
+    parts = Split(styleText, ";")
+    
+    For i = LBound(parts) To UBound(parts)
+        p = InStr(parts(i), ":")
+        If p > 0 Then
+            key = LCase$(Trim$(Left$(parts(i), p - 1)))
+            val = Trim$(Mid$(parts(i), p + 1))
+            If key = LCase$(propName) Then
+                ExtractStyleProperty = val
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+Private Function ParseCssColor(ByVal s As String, ByRef colorVal As Long) As Boolean
+    Dim r As Long, g As Long, b As Long
+    Dim parts() As String
+    
+    s = LCase$(Trim$(s))
+    
+    Select Case s
+        Case "red": colorVal = RGB(255, 0, 0): ParseCssColor = True
+        Case "green": colorVal = RGB(0, 128, 0): ParseCssColor = True
+        Case "blue": colorVal = RGB(0, 0, 255): ParseCssColor = True
+        Case "orange": colorVal = RGB(255, 165, 0): ParseCssColor = True
+        Case "yellow": colorVal = RGB(255, 255, 0): ParseCssColor = True
+        Case "black": colorVal = RGB(0, 0, 0): ParseCssColor = True
+    End Select
+    
+    If ParseCssColor Then Exit Function
+    
+    If Left$(s, 1) = "#" And Len(s) = 7 Then
+        On Error Resume Next
+        r = CLng("&H" & Mid$(s, 2, 2))
+        g = CLng("&H" & Mid$(s, 4, 2))
+        b = CLng("&H" & Mid$(s, 6, 2))
+        If Err.Number = 0 Then
+            colorVal = RGB(r, g, b)
+            ParseCssColor = True
+        End If
+        On Error GoTo 0
+        Exit Function
+    End If
+    
+    If Left$(s, 4) = "rgb(" And Right$(s, 1) = ")" Then
+        s = Mid$(s, 5, Len(s) - 5)
+        parts = Split(s, ",")
+        If UBound(parts) = 2 Then
+            r = CLng(Trim$(parts(0)))
+            g = CLng(Trim$(parts(1)))
+            b = CLng(Trim$(parts(2)))
+            colorVal = RGB(r, g, b)
+            ParseCssColor = True
+        End If
+    End If
+End Function
+
+Private Sub GrowParagraphArrays(ByRef paraBullet() As Boolean, ByRef paraLevel() As Long, ByVal newSize As Long)
+    If newSize > UBound(paraBullet) Then
+        ReDim Preserve paraBullet(1 To newSize * 2)
+        ReDim Preserve paraLevel(1 To newSize * 2)
+    End If
+End Sub
+
+Private Function CleanupExtraBreaks(ByVal s As String) As String
+    Do While InStr(s, vbCrLf & vbCrLf & vbCrLf) > 0
+        s = Replace$(s, vbCrLf & vbCrLf & vbCrLf, vbCrLf & vbCrLf)
+    Loop
+    CleanupExtraBreaks = s
+End Function
+
+Private Function DecodeHtmlEntities(ByVal s As String) As String
+    s = Replace$(s, "&nbsp;", " ")
+    s = Replace$(s, "&amp;", "&")
+    s = Replace$(s, "&lt;", "<")
+    s = Replace$(s, "&gt;", ">")
+    s = Replace$(s, "&quot;", """")
+    DecodeHtmlEntities = s
+End Function
+
